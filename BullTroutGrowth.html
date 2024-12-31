@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bull Trout Growth Tool</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.2/papaparse.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #121212;
+            color: #FFFFFF;
+        }
+        .section {
+            margin-bottom: 20px;
+            padding: 10px;
+            border: 1px solid #444;
+            border-radius: 5px;
+            background-color: #1E1E1E;
+        }
+        .conversion-container {
+            display: flex;
+            justify-content: space-between;
+        }
+        .conversion-box {
+            flex: 1;
+            margin: 0 10px;
+        }
+        label {
+            font-weight: bold;
+        }
+        .output {
+            font-weight: bold;
+            color: #FFA500; /* Orange color */
+        }
+        button {
+            background-color: #FFA500; /* Orange color */
+            color: #FFFFFF;
+            border: none;
+            padding: 10px 15px;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #FF8C00; /* Darker orange on hover */
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        th, td {
+            padding: 8px;
+            border: 1px solid #444;
+            text-align: center;
+        }
+        .equation {
+            font-style: italic;
+            color: #FFA500; /* Orange color */
+        }
+    </style>
+</head>
+<body>
+    <h1>Bull Trout Growth Tool</h1>
+
+    <div class="section">
+        <h2>Length Conversion</h2>
+        <div class="conversion-container">
+            <div class="conversion-box">
+                <label for="fl-input">Fork Length (FL, mm):</label>
+                <input type="number" id="fl-input" oninput="convertToTLAndAge()" placeholder="Enter FL">
+                <p>Total Length (TL, mm): <span id="tl-output" class="output">-</span></p>
+                <p>Estimated Age (Years): <span id="fl-age-output" class="output">-</span></p>
+                <p class="equation">TL = 18.985 + 1.014 × FL</p>
+            </div>
+            <div class="conversion-box">
+                <label for="tl-input">Total Length (TL, mm):</label>
+                <input type="number" id="tl-input" oninput="convertToFLAndAge()" placeholder="Enter TL">
+                <p>Fork Length (FL, mm): <span id="fl-output" class="output">-</span></p>
+                <p>Estimated Age (Years): <span id="tl-age-output" class="output">-</span></p>
+                <p class="equation">FL = -13.862 + 0.974 × TL</p>
+            </div>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>Upload FL Data (CSV or XLSX)</h2>
+        <input type="file" id="file-input" accept=".csv, .xlsx">
+        <button onclick="processFile()">Process File</button>
+        <p><strong>Note:</strong> The tool will automatically detect columns labeled <code>FL</code>, <code>Length.FL</code>, or similar.</p>
+    </div>
+
+    <div class="section">
+        <h2>Calculated Ages</h2>
+        <button onclick="downloadResults()">Download Results (CSV)</button>
+        <p class="equation">Age = 0.25 - 5 × ln(1 - FL / 820)</p>
+        <table id="results-table">
+            <thead>
+                <tr>
+                    <th>Fork Length (FL, mm)</th>
+                    <th>Estimated Age (Years)</th>
+                </tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+    </div>
+
+    <script>
+        // VBGM constants
+        const LINFINITY = 820;
+        const K_MULTIPLIER = 5; // Simplified 1/K
+        const T0 = 0.25;
+
+        // Results storage
+        let results = [];
+
+        // Convert FL to TL and calculate age
+        function convertToTLAndAge() {
+            const fl = parseFloat(document.getElementById('fl-input').value);
+            if (!isNaN(fl)) {
+                const tl = 18.985 + 1.014 * fl;
+                const age = T0 - K_MULTIPLIER * Math.log(1 - fl / LINFINITY);
+                document.getElementById('tl-output').textContent = tl.toFixed(2);
+                document.getElementById('fl-age-output').textContent = age.toFixed(2);
+            } else {
+                document.getElementById('tl-output').textContent = '-';
+                document.getElementById('fl-age-output').textContent = '-';
+            }
+        }
+
+        // Convert TL to FL and calculate age
+        function convertToFLAndAge() {
+            const tl = parseFloat(document.getElementById('tl-input').value);
+            if (!isNaN(tl)) {
+                const fl = -13.862 + 0.974 * tl;
+                const age = T0 - K_MULTIPLIER * Math.log(1 - fl / LINFINITY);
+                document.getElementById('fl-output').textContent = fl.toFixed(2);
+                document.getElementById('tl-age-output').textContent = age.toFixed(2);
+            } else {
+                document.getElementById('fl-output').textContent = '-';
+                document.getElementById('tl-age-output').textContent = '-';
+            }
+        }
+
+        // Process uploaded file
+        function processFile() {
+            const fileInput = document.getElementById('file-input');
+            const file = fileInput.files[0];
+
+            if (!file) {
+                alert('Please upload a file!');
+                return;
+            }
+
+            if (file.name.endsWith('.csv')) {
+                processCSV(file);
+            } else if (file.name.endsWith('.xlsx')) {
+                processXLSX(file);
+            } else {
+                alert('Invalid file type. Please upload a CSV or XLSX file.');
+            }
+        }
+
+        // Check for column containing FL
+        function findFLColumn(columns) {
+            const regex = /\bFL\b|\bLength\.FL\b/i; // Match "FL", "Length.FL", etc.
+            return columns.find(col => regex.test(col)) || null;
+        }
+
+        // Process CSV file
+        function processCSV(file) {
+            Papa.parse(file, {
+                header: true,
+                complete: (result) => {
+                    const columns = Object.keys(result.data[0]);
+                    const flColumn = findFLColumn(columns);
+
+                    if (!flColumn) {
+                        alert('No column matching FL or similar keywords found!');
+                        return;
+                    }
+
+                    calculateAges(result.data, flColumn);
+                }
+            });
+        }
+
+        // Process XLSX file
+        function processXLSX(file) {
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const data = new Uint8Array(e.target.result);
+                const workbook = XLSX.read(data, { type: 'array' });
+                const sheetName = workbook.SheetNames[0];
+                const sheet = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName]);
+
+                if (!sheet.length) {
+                    alert('The file is empty!');
+                    return;
+                }
+
+                const columns = Object.keys(sheet[0]);
+                const flColumn = findFLColumn(columns);
+
+                if (!flColumn) {
+                    alert('No column matching FL or similar keywords found!');
+                    return;
+                }
+
+                calculateAges(sheet, flColumn);
+            };
+            reader.readAsArrayBuffer(file);
+        }
+
+        // Calculate ages from FL data
+        function calculateAges(data, flColumn) {
+            results = data.map(row => {
+                const FL = parseFloat(row[flColumn]);
+
+                if (isNaN(FL)) {
+                    return { FL: 'NA', Age: 'NA' }; // Return NA for missing values
+                }
+
+                if (FL > LINFINITY) {
+                    return { FL, Age: 'Invalid (FL > Linf)' }; // Invalid for large FL
+                }
+
+                const age = T0 - K_MULTIPLIER * Math.log(1 - FL / LINFINITY);
+                return { FL, Age: age.toFixed(2) };
+            });
+            displayResults();
+        }
+
+        // Display results in the table
+        function displayResults() {
+            const tbody = document.querySelector('#results-table tbody');
+            tbody.innerHTML = ''; // Clear previous results
+
+            results.forEach(result => {
+                const row = `<tr>
+                    <td>${result.FL}</td>
+                    <td>${result.Age}</td>
+                </tr>`;
+                tbody.insertAdjacentHTML('beforeend', row);
+            });
+        }
+
+        // Download results as CSV
+        function downloadResults() {
+            if (!results.length) {
+                alert('No results to download!');
+                return;
+            }
+
+            const csvContent = 'data:text/csv;charset=utf-8,FL,Age\n' +
+                results.map(r => `${r.FL},${r.Age}`).join('\n');
+            const encodedUri = encodeURI(csvContent);
+            const link = document.createElement('a');
+            link.setAttribute('href', encodedUri);
+            link.setAttribute('download', 'growth_results.csv');
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+    </script>
+</body>
+</html>
