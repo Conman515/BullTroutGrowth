@@ -20,14 +20,6 @@
             border-radius: 5px;
             background-color: #1E1E1E;
         }
-        .conversion-container {
-            display: flex;
-            justify-content: space-between;
-        }
-        .conversion-box {
-            flex: 1;
-            margin: 0 10px;
-        }
         label {
             font-weight: bold;
         }
@@ -66,15 +58,15 @@
 
     <div class="section">
         <h2>Length Conversion</h2>
-        <div class="conversion-container">
-            <div class="conversion-box">
+        <div style="display: flex; justify-content: space-between;">
+            <div>
                 <label for="fl-input">Fork Length (FL, mm):</label>
                 <input type="number" id="fl-input" oninput="convertToTLAndAge()" placeholder="Enter FL">
                 <p>Total Length (TL, mm): <span id="tl-output" class="output">-</span></p>
                 <p>Estimated Age (Years): <span id="fl-age-output" class="output">-</span></p>
                 <p class="equation">TL = 18.985 + 1.014 × FL</p>
             </div>
-            <div class="conversion-box">
+            <div>
                 <label for="tl-input">Total Length (TL, mm):</label>
                 <input type="number" id="tl-input" oninput="convertToFLAndAge()" placeholder="Enter TL">
                 <p>Fork Length (FL, mm): <span id="fl-output" class="output">-</span></p>
@@ -85,10 +77,10 @@
     </div>
 
     <div class="section">
-        <h2>Upload FL Data (CSV or XLSX)</h2>
+        <h2>Upload FL or TL Data (CSV or XLSX)</h2>
         <input type="file" id="file-input" accept=".csv, .xlsx">
         <button onclick="processFile()">Process File</button>
-        <p><strong>Note:</strong> The tool will automatically detect columns labeled <code>FL</code>, <code>Length.FL</code>, or similar.</p>
+        <p><strong>Note:</strong> The tool will automatically detect columns labeled <code>FL</code>, <code>Length.FL</code>, <code>TL</code>, or <code>Length.TL</code>.</p>
     </div>
 
     <div class="section">
@@ -115,13 +107,14 @@
         // Results storage
         let results = [];
 
-        // Convert FL to TL and calculate age
+        // Convert FL to TL and Age
         function convertToTLAndAge() {
             const fl = parseFloat(document.getElementById('fl-input').value);
             if (!isNaN(fl)) {
                 const tl = 18.985 + 1.014 * fl;
-                const age = T0 - K_MULTIPLIER * Math.log(1 - fl / LINFINITY);
                 document.getElementById('tl-output').textContent = tl.toFixed(2);
+
+                const age = T0 - K_MULTIPLIER * Math.log(1 - fl / LINFINITY);
                 document.getElementById('fl-age-output').textContent = age.toFixed(2);
             } else {
                 document.getElementById('tl-output').textContent = '-';
@@ -129,13 +122,14 @@
             }
         }
 
-        // Convert TL to FL and calculate age
+        // Convert TL to FL and Age
         function convertToFLAndAge() {
             const tl = parseFloat(document.getElementById('tl-input').value);
             if (!isNaN(tl)) {
                 const fl = -13.862 + 0.974 * tl;
-                const age = T0 - K_MULTIPLIER * Math.log(1 - fl / LINFINITY);
                 document.getElementById('fl-output').textContent = fl.toFixed(2);
+
+                const age = T0 - K_MULTIPLIER * Math.log(1 - fl / LINFINITY);
                 document.getElementById('tl-age-output').textContent = age.toFixed(2);
             } else {
                 document.getElementById('fl-output').textContent = '-';
@@ -162,10 +156,15 @@
             }
         }
 
-        // Check for column containing FL
-        function findFLColumn(columns) {
-            const regex = /\bFL\b|\bLength\.FL\b/i; // Match "FL", "Length.FL", etc.
-            return columns.find(col => regex.test(col)) || null;
+        // Check for FL and TL columns
+        function findLengthColumn(columns) {
+            const FL_regex = /\bFL\b|\bLength\.FL\b/i; // Match "FL", "Length.FL", etc.
+            const TL_regex = /\bTL\b|\bLength\.TL\b/i; // Match "TL", "Length.TL", etc.
+
+            const FL_col = columns.find(col => FL_regex.test(col)) || null;
+            const TL_col = columns.find(col => TL_regex.test(col)) || null;
+
+            return { FL_col, TL_col };
         }
 
         // Process CSV file
@@ -174,14 +173,14 @@
                 header: true,
                 complete: (result) => {
                     const columns = Object.keys(result.data[0]);
-                    const flColumn = findFLColumn(columns);
+                    const lengthColumns = findLengthColumn(columns);
 
-                    if (!flColumn) {
-                        alert('No column matching FL or similar keywords found!');
+                    if (!lengthColumns.FL_col && !lengthColumns.TL_col) {
+                        alert('No column matching FL, TL, or similar keywords found!');
                         return;
                     }
 
-                    calculateAges(result.data, flColumn);
+                    calculateAges(result.data, lengthColumns);
                 }
             });
         }
@@ -201,25 +200,35 @@
                 }
 
                 const columns = Object.keys(sheet[0]);
-                const flColumn = findFLColumn(columns);
+                const lengthColumns = findLengthColumn(columns);
 
-                if (!flColumn) {
-                    alert('No column matching FL or similar keywords found!');
+                if (!lengthColumns.FL_col && !lengthColumns.TL_col) {
+                    alert('No column matching FL, TL, or similar keywords found!');
                     return;
                 }
 
-                calculateAges(sheet, flColumn);
+                calculateAges(sheet, lengthColumns);
             };
             reader.readAsArrayBuffer(file);
         }
 
-        // Calculate ages from FL data
-        function calculateAges(data, flColumn) {
+        // Calculate ages from FL or TL data
+        function calculateAges(data, lengthColumns) {
+            const { FL_col, TL_col } = lengthColumns;
+
             results = data.map(row => {
-                const FL = parseFloat(row[flColumn]);
+                let FL = parseFloat(row[FL_col]);
+
+                // If FL is not available, try converting TL to FL
+                if (isNaN(FL) && TL_col) {
+                    const TL = parseFloat(row[TL_col]);
+                    if (!isNaN(TL)) {
+                        FL = -13.862 + 0.974 * TL;
+                    }
+                }
 
                 if (isNaN(FL)) {
-                    return { FL: 'NA', Age: 'NA' }; // Return NA for missing values
+                    return { FL: 'NA', Age: 'NA' }; // Return NA
                 }
 
                 if (FL > LINFINITY) {
@@ -227,8 +236,9 @@
                 }
 
                 const age = T0 - K_MULTIPLIER * Math.log(1 - FL / LINFINITY);
-                return { FL, Age: age.toFixed(2) };
+                return { FL: FL.toFixed(2), Age: age.toFixed(2) };
             });
+
             displayResults();
         }
 
