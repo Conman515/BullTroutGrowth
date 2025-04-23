@@ -86,7 +86,9 @@
     <div class="section">
         <h2>Calculated Ages</h2>
         <button onclick="downloadResults()">Download Results (CSV)</button>
-        <p class="equation">Age = 0.25 - 5 × ln(1 - FL / 820)</p>
+        <p class="equation">
+            Age = −(1 / 0.207) × ln(1 − FL / 812.3)
+        </p>
         <table id="results-table">
             <thead>
                 <tr>
@@ -100,9 +102,9 @@
 
     <script>
         // VBGM constants
-        const LINFINITY = 820;
-        const K_MULTIPLIER = 5; // Simplified 1/K
-        const T0 = 0.25;
+        const LINFINITY = 812.3;
+        const K = 0.207;
+        const T0 = 0;
 
         // Results storage
         let results = [];
@@ -114,7 +116,8 @@
                 const tl = 18.985 + 1.014 * fl;
                 document.getElementById('tl-output').textContent = tl.toFixed(2);
 
-                const age = T0 - K_MULTIPLIER * Math.log(1 - fl / LINFINITY);
+                // VBGM age
+                const age = -Math.log(1 - fl / LINFINITY) / K + T0;
                 document.getElementById('fl-age-output').textContent = age.toFixed(2);
             } else {
                 document.getElementById('tl-output').textContent = '-';
@@ -129,7 +132,8 @@
                 const fl = -13.862 + 0.974 * tl;
                 document.getElementById('fl-output').textContent = fl.toFixed(2);
 
-                const age = T0 - K_MULTIPLIER * Math.log(1 - fl / LINFINITY);
+                // VBGM age
+                const age = -Math.log(1 - fl / LINFINITY) / K + T0;
                 document.getElementById('tl-age-output').textContent = age.toFixed(2);
             } else {
                 document.getElementById('fl-output').textContent = '-';
@@ -137,138 +141,82 @@
             }
         }
 
-        // Process uploaded file
+        // File processing boilerplate
         function processFile() {
-            const fileInput = document.getElementById('file-input');
-            const file = fileInput.files[0];
-
-            if (!file) {
-                alert('Please upload a file!');
-                return;
-            }
-
-            if (file.name.endsWith('.csv')) {
-                processCSV(file);
-            } else if (file.name.endsWith('.xlsx')) {
-                processXLSX(file);
-            } else {
-                alert('Invalid file type. Please upload a CSV or XLSX file.');
-            }
+            const file = document.getElementById('file-input').files[0];
+            if (!file) return alert('Please upload a file!');
+            if (file.name.endsWith('.csv')) processCSV(file);
+            else if (file.name.endsWith('.xlsx')) processXLSX(file);
+            else alert('Invalid file type. Please upload a CSV or XLSX file.');
         }
 
-        // Check for FL and TL columns
         function findLengthColumn(columns) {
-            const FL_regex = /\bFL\b|\bLength\.FL\b/i; // Match "FL", "Length.FL", etc.
-            const TL_regex = /\bTL\b|\bLength\.TL\b/i; // Match "TL", "Length.TL", etc.
-
-            const FL_col = columns.find(col => FL_regex.test(col)) || null;
-            const TL_col = columns.find(col => TL_regex.test(col)) || null;
-
-            return { FL_col, TL_col };
+            const FL_regex = /\bFL\b|\bLength\.FL\b/i;
+            const TL_regex = /\bTL\b|\bLength\.TL\b/i;
+            return {
+                FL_col: columns.find(c => FL_regex.test(c)) || null,
+                TL_col: columns.find(c => TL_regex.test(c)) || null
+            };
         }
 
-        // Process CSV file
         function processCSV(file) {
             Papa.parse(file, {
                 header: true,
-                complete: (result) => {
-                    const columns = Object.keys(result.data[0]);
-                    const lengthColumns = findLengthColumn(columns);
-
-                    if (!lengthColumns.FL_col && !lengthColumns.TL_col) {
-                        alert('No column matching FL, TL, or similar keywords found!');
-                        return;
-                    }
-
-                    calculateAges(result.data, lengthColumns);
+                complete: (res) => {
+                    const cols = Object.keys(res.data[0] || {});
+                    const { FL_col, TL_col } = findLengthColumn(cols);
+                    if (!FL_col && !TL_col) return alert('No FL/TL column found!');
+                    calculateAges(res.data, { FL_col, TL_col });
                 }
             });
         }
 
-        // Process XLSX file
         function processXLSX(file) {
             const reader = new FileReader();
-            reader.onload = (e) => {
-                const data = new Uint8Array(e.target.result);
-                const workbook = XLSX.read(data, { type: 'array' });
-                const sheetName = workbook.SheetNames[0];
-                const sheet = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName]);
-
-                if (!sheet.length) {
-                    alert('The file is empty!');
-                    return;
-                }
-
-                const columns = Object.keys(sheet[0]);
-                const lengthColumns = findLengthColumn(columns);
-
-                if (!lengthColumns.FL_col && !lengthColumns.TL_col) {
-                    alert('No column matching FL, TL, or similar keywords found!');
-                    return;
-                }
-
-                calculateAges(sheet, lengthColumns);
+            reader.onload = e => {
+                const wb = XLSX.read(new Uint8Array(e.target.result), { type: 'array' });
+                const sheet = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
+                if (!sheet.length) return alert('The file is empty!');
+                const cols = Object.keys(sheet[0]);
+                const { FL_col, TL_col } = findLengthColumn(cols);
+                if (!FL_col && !TL_col) return alert('No FL/TL column found!');
+                calculateAges(sheet, { FL_col, TL_col });
             };
             reader.readAsArrayBuffer(file);
         }
 
-        // Calculate ages from FL or TL data
-        function calculateAges(data, lengthColumns) {
-            const { FL_col, TL_col } = lengthColumns;
-
+        function calculateAges(data, { FL_col, TL_col }) {
             results = data.map(row => {
                 let FL = parseFloat(row[FL_col]);
-
-                // If FL is not available, try converting TL to FL
                 if (isNaN(FL) && TL_col) {
                     const TL = parseFloat(row[TL_col]);
-                    if (!isNaN(TL)) {
-                        FL = -13.862 + 0.974 * TL;
-                    }
+                    if (!isNaN(TL)) FL = -13.862 + 0.974 * TL;
                 }
-
-                if (isNaN(FL)) {
-                    return { FL: 'NA', Age: 'NA' }; // Return NA
-                }
-
-                if (FL > LINFINITY) {
-                    return { FL, Age: 'Invalid (FL > Linf)' }; // Invalid for large FL
-                }
-
-                const age = T0 - K_MULTIPLIER * Math.log(1 - FL / LINFINITY);
+                if (isNaN(FL)) return { FL: 'NA', Age: 'NA' };
+                if (FL > LINFINITY) return { FL, Age: 'Invalid (FL > Linf)' };
+                const age = -Math.log(1 - FL / LINFINITY) / K + T0;
                 return { FL: FL.toFixed(2), Age: age.toFixed(2) };
             });
-
             displayResults();
         }
 
-        // Display results in the table
         function displayResults() {
             const tbody = document.querySelector('#results-table tbody');
-            tbody.innerHTML = ''; // Clear previous results
-
-            results.forEach(result => {
-                const row = `<tr>
-                    <td>${result.FL}</td>
-                    <td>${result.Age}</td>
-                </tr>`;
-                tbody.insertAdjacentHTML('beforeend', row);
+            tbody.innerHTML = '';
+            results.forEach(r => {
+                tbody.insertAdjacentHTML('beforeend',
+                    `<tr><td>${r.FL}</td><td>${r.Age}</td></tr>`
+                );
             });
         }
 
-        // Download results as CSV
         function downloadResults() {
-            if (!results.length) {
-                alert('No results to download!');
-                return;
-            }
-
-            const csvContent = 'data:text/csv;charset=utf-8,FL,Age\n' +
-                results.map(r => `${r.FL},${r.Age}`).join('\n');
-            const encodedUri = encodeURI(csvContent);
+            if (!results.length) return alert('No results to download!');
+            const csv = 'data:text/csv;charset=utf-8,FL,Age\n' +
+                        results.map(r => `${r.FL},${r.Age}`).join('\n');
             const link = document.createElement('a');
-            link.setAttribute('href', encodedUri);
-            link.setAttribute('download', 'growth_results.csv');
+            link.href = encodeURI(csv);
+            link.download = 'growth_results.csv';
             document.body.appendChild(link);
             link.click();
             document.body.removeChild(link);
